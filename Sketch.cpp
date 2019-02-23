@@ -14,8 +14,11 @@ void doEncoderRoata();
 void pas_inainte();
 void senzor_cap_activ();
 void resetare_encoder();
-int diferenta_pasi();
-int pid(float error);
+int pasi_ramasi(); // pasi ramasi de parcursi pana la stop
+int pasi_parcursi(); // pasi care sau parcurs de la utlimul stop calculat
+int pid(float viteza_referinta);
+void press_buton_red();
+void press_both_buttons(); //intrare in modul de setare
 // void doEncoderA();
 // void doEncoderB();
 //void senzor_cap();
@@ -49,7 +52,8 @@ volatile int encoder0Pos;
 int encoderstop;
 int encoderlast;
 int encoderResset;
-int lastMilli2;//masurare timp discret
+long lastMilli2;//masurare timp discret
+float resset;
 
 //output varibales
 volatile bool flag_trimiteI2C = 0;
@@ -60,10 +64,12 @@ bool flag_inainte;
 bool flag_roata;
 byte pwm_motor;
 unsigned long lastMilli;
-static float lasterror; ///variabila pt PID
-			float Dreferinta; //distanta de parcurs   - de mutat in functia inainte
-			float Dmasurat; //distanta masurata   - de mutat in functia inainte
-			float corectie;
+const int pasul=125;
+int pas=125;
+
+//viteza masurata   - de mutat in functia inainte
+float i[5];
+
 //class Button--------------------------------------------------------------
 class Button
 {
@@ -309,7 +315,7 @@ void setup(){
 	attachInterrupt(digitalPinToInterrupt(senzor_roata), doEncoderRoata, FALLING);
 	//digitalWrite(alimentare_circuit, HIGH);
 	led_red.off();
-	led_green.off();
+	led_green.on();
 	delay(1000);
 	//portD=================================================== intreruperi buton_red si Buton _black
     DDRD &= ~((1 << DDD6) | (1 << DDD7)); // Clear the PC2 pin
@@ -344,49 +350,33 @@ void setup(){
 
 
 void loop(){
-	led_red.off();
-		digitalWrite(m_reverse, LOW);
-		digitalWrite(m_forward, LOW);
 	while (buton_black.status()==1)
 	{
-		//analogWrite(m_forward,200);
 		mot.reverse(60);
 	}
-	while (buton_red.status()==1)
-	{
-		//analogWrite(m_forward,200);
-		mot.forward(150);
-		if (flag_roata == 1)
-		{
-// 				Wire.beginTransmission(8);
-// 				Wire.write(byte(encoderMotorPos/250));
-// 				Wire.endTransmission();
- 				Wire.beginTransmission(8);
- 				Wire.write(encoderMotorPos%250);				Wire.endTransmission();
-	
-			flag_roata = 0;
-		}
-	}	
+
 	senzor_cap_activ();
-	//resetare_encoder();
+	press_buton_red();
+	resetare_encoder();
+	led_green.on();
+	mot.braking();
 if (flag_trimiteI2C==1){
-// 	Wire.beginTransmission(8);
-// 	Wire.write(byte(encoderMotorPos/250));
-// 	Wire.endTransmission();
-// 	Wire.beginTransmission(8);
-// 	Wire.write(encoderMotorPos%250);
-// 	Wire.endTransmission();
-    //trimiteI2C(directie); //trimiteI2C(j);
+    trimiteI2C(directie); //trimiteI2C(j);
 	flag_trimiteI2C=0;
+	delayMicroseconds(50);
+
 }
 
 
 }
 
 int trimiteI2C(int i){
+// 	Wire.beginTransmission(8);
+// 	Wire.write(i);
+// 	Wire.endTransmission();	
 	Wire.beginTransmission(8);
-	Wire.write(i);
-	Wire.endTransmission();	
+	Wire.write(encoderMotorPos%250);	Wire.endTransmission();
+	
 	return 0;
 }
 ISR (PCINT0_vect)  //intreruperi senzor_cap vsop
@@ -421,7 +411,6 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
     uint8_t changedbits;
     changedbits = PIND ^ portDhistory;
     portDhistory = PIND;	
-	
     if(changedbits & (1 << PIND7))
     {
 	    /* PCINT22 changed */
@@ -440,30 +429,24 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
 	    }
     }
 	
-    if(changedbits & (1 << PIND6))
+    if(changedbits & (1 << PIND6)) //buton rosu
     {
-	    /* PCINT23 changed */
-	    if(PIND & (1 << PIND6)) // if PIND6 == 1 (HIGH)  buton rosu
-	    {
-		    /* LOW to HIGH pin change */
-		    led_red.off();
-	    }
-	    else
-	    {
-		    /* HIGH to LOW pin change */
-		    led_red.on();
-		    j = buton_red.status();
-			flag_trimiteI2C=1;
-	    }
+		if(buton_red.status()==1){
+			led_red.on();
+		}
+		else{
+			led_red.off();
+		}
     }
 }
 
 void doEncoderMotor()
 {
+	
 	directie=encoder_directie.directie();
-	  cli();
-		  encoderMotorPos = encoderMotorPos + directie;
-	  sei();
+	cli();
+	encoderMotorPos = encoderMotorPos + directie;
+	sei();
 }
 
   void  doEncoderRoata() {
@@ -475,95 +458,159 @@ void senzor_cap_activ() {//activare motor inainte
 	while (senzor_cap.status() == 1) { //senzor cap activ, se aprinde ledul si se asteapta sa se retraga
 		led_red.on();
 	}
-	const int pasul=125;
 	if (senzor_cap.status() == 0 && flag_inainte == 1) {  // daca cap s-a retras si flag inainte este activ
 		led_red.on();
 		led_green.off();
+		pas=pasul;
 		encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
-		encoderstop=encoderResset+pasul;
-		int encoderlast2;
+		encoderstop=encoderResset+pas;
 		while (flag_inainte == 1) {                           //inainteaza
 			//soft start
+			cli();
 			lastMilli=millis();
 			lastMilli2 = millis();
-			int  t= millis()-lastMilli; //timpul
+			int t= millis()-lastMilli; //timpul
+			sei();
+			encoderlast=encoderMotorPos;
 			float v; //viteza 
-			//float Dreferinta; //distanta de parcurs
-			//float Dmasurat; //distanta masurata
-			float err;
-			
-			const float a = 0.003; //acceleratia
-			while(t < 150){  //diferenta_pasidiferenta_pasi() > 100
-				t= millis()-lastMilli;
+			const float a = 0.010; //acceleratia
+			//secventa 1 accelerare
+			while(pasi_parcursi() < 50 && t < 90)   //
+			{
+				cli();
+				t = millis()-lastMilli;
+				sei();
 				v=a*t;
-				Dreferinta=((a*t)/2)*t;//d=(v/2)*t sau d=do+((v0+V(t))/2)*t si v(t)=v0+a*t distanta de prcurs - teoretica
-				Dmasurat = pasul-diferenta_pasi();
-				err = Dreferinta-Dmasurat;
-				corectie = pid(err); //eroare
-				pwm_motor=corectie;
-				if (pwm_motor >= 255)
-				{
-					pwm_motor=255;
-				}
-				mot.forward(pwm_motor);
-				delayMicroseconds(50);
+				pid(v);// calculare pid si comanda motor
 			}
-			// end soft start
+			//secventa 1 end accelerare
 
-			// constant speed
-			int d0=Dreferinta;//d0=33.75
+			//secventa 2 constant speed
+			cli();
 			lastMilli=millis();
-			lastMilli2 = millis();
-			while(diferenta_pasi() <= 100 && diferenta_pasi() >= 35){
-				t= millis()-lastMilli; //timpul
-				Dreferinta=d0+v*t;//d=d0+v*t distanta de pracurs
-				Dmasurat = pasul-diferenta_pasi();
-				err = Dreferinta-Dmasurat;
-				pwm_motor=pid(err);				
-				mot.forward(pwm_motor);
-				delayMicroseconds(50);
+			sei();
+			while(pasi_parcursi() <= pas-43)
+			{
+				pid(v);	
 			}
-			// constant speed
+			//secventa 2 end constant speed
 			
-			//soft stop
-			int decrement;
-			d0=Dreferinta;//d0=92.25
-			float v0=v;
-			lastMilli=millis();	
-			lastMilli2 = millis();		
-			while(encoderstop > encoderMotorPos){
-				t= millis()-lastMilli; //timpul
-				Dreferinta=d0+((v0+v0-a*t)/2)*t;//d=d0+v*t distanta de pracurs
-				if (Dreferinta > pasul)
+			//secventa 3 deccelerare			
+			float v3;
+			float a3 = -a; // acceleratie negativa
+			cli();
+			lastMilli=millis();
+			sei();		
+			while(pasi_parcursi() <= pas-3){
+				cli();
+				t = millis()-lastMilli;
+				sei();
+				v3 = v + a3 * t; //viteza de referinta
+				if (v3 < 0.15)
 				{
-					Dreferinta=pasul;
-				
+					v3=0.15;
 				}
-// 					 if (millis()-z > 5){ //daca au trecut .... milisec atunci se masoara
-// 						 z=millis();
-// 						 		Wire.beginTransmission(8);
-// 						 		Wire.write(int(Dreferinta));
-// 						 		Wire.endTransmission();
-// 						 }
-				Dmasurat = pasul-diferenta_pasi();
-				err = Dreferinta-Dmasurat;
-				pwm_motor=pid(err);
-				mot.forward(pwm_motor);
-				delayMicroseconds(50);
-
+				pid(v3);//pwm_motor=pid(v3);
 			}
-			//end of soft stop
+			//secventa 3 end - deccelerare
+				
+			//secventa 4 - viteza constanta la oprire		
+			while(encoderstop > encoderMotorPos)
+			{
+				pid(0.15); //viteza-referinta v4 = 0.1
+			}
+			//secventa 4 end viteza constanta la oprire		
 			mot.braking();
-			// 			pozitie[i]=encoder0Pos;
-			// 			i=i+1;
+			led_red.off();
 			flag_inainte = 0;
+			flag_trimiteI2C=1;
+			resset=0;
 		}
-		lasterror=0;
-		delay(100);
-		flag_trimiteI2C=1;
 	}
 }
 
+void press_buton_red(){
+	if(buton_red.status()== 1 && buton_black.status()==0){
+		delay(250);
+		if(buton_red.status()== 1 && buton_black.status()==0){
+		led_green.off();
+		pas=32500;
+		encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+		encoderstop=encoderResset+pas;
+		flag_inainte = 1;
+		boolean flag2 = 0;
+		while (flag_inainte == 1) {                           //inainteaza
+			//soft start
+			cli();
+			lastMilli=millis();
+			lastMilli2 = millis();
+			int t= millis()-lastMilli; //timpul
+			sei();
+			encoderlast=encoderMotorPos;
+			float v; //viteza
+			const float a = 0.010; //acceleratia
+			//secventa 1 accelerare
+			while(pasi_parcursi() < 50 && t < 150)   //
+			{
+				cli();
+				t = millis()-lastMilli;
+				sei();
+				v=a*t;
+				pid(v);
+			}
+			//secventa 1 end accelerare
+
+			//secventa 2 constant speed
+			cli();
+			lastMilli=millis();
+			sei();
+			while(pasi_parcursi() <= pas-73)
+			{
+				pid(v);
+				if (buton_red.status()==0 && flag2 == 0)
+				{
+					pas=pasul;
+					encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+					encoderstop=encoderResset+pas+pas;
+					flag2 = 1;
+				}
+			}
+			//secventa 2 end constant speed
+
+			//secventa 3 deccelerare
+			float v3;
+			float a3 = -a; // acceleratie negativa
+			cli();
+			lastMilli=millis();
+			sei();
+			while(pasi_parcursi() <= pas-3){
+				cli();
+				t = millis()-lastMilli;
+				sei();
+				v3 = v + a3 * t; //viteza de referinta
+				if (v3 < 0.1)
+				{
+					v3=0.1;
+				}
+				pid(v3);//pwm_motor=pid(v3);
+			}
+			//secventa 3 end - deccelerare
+			
+			//secventa 4 - viteza constanta la oprire
+			while(encoderstop > encoderMotorPos)
+			{
+				pid(0.1); //viteza-referinta v4 = 0.1
+			}
+			//secventa 4 end viteza constanta la oprire
+			mot.braking();
+			flag_inainte = 0;
+		}
+		flag_trimiteI2C=1;
+		resset=0;		
+		}
+	}
+	
+}
 
 //=================VECHI------------------------------------------------------------
 /*
@@ -858,11 +905,11 @@ void senzor_cap() {
 */
 
   void resetare_encoder(){
-    if (encoderMotorPos > 125){
-      encoderMotorPos = encoderMotorPos % 125;
+    if (encoderMotorPos > pasul){
+      encoderMotorPos = encoderMotorPos % pasul;
     }
     if (encoderMotorPos < 0){
-      encoderMotorPos = (encoderMotorPos % 125) + 125;
+      encoderMotorPos = (encoderMotorPos % pasul) + pasul;
     }
     //flag_ciclu = true;
    // if(digitalRead(buton1) == HIGH){
@@ -870,26 +917,88 @@ void senzor_cap() {
     //}
   }
   
-  int diferenta_pasi(){
-	  return encoderstop-encoderMotorPos;
-  }
+int pasi_ramasi(){
+	return encoderstop-encoderMotorPos;
+}
+
+int pasi_parcursi(){
+	return pas-(encoderstop-encoderMotorPos);
+}
   
- int pid(float error){
+  
+int pid(float viteza_referinta){
 	static int comanda;
-	float p;
-	float _error;
-	int z = millis()-lastMilli2;
-	 if (z > 2){ //daca au trecut .... milisec atunci se masoara
+	static int z;
+	static const float perioada_esantionare=4;
+	z = millis()-lastMilli2;//timpul scurs de la utima apelare a functiei
+	if (z > perioada_esantionare)//daca au trecut .... milisec atunci se masoara
+	{ 
+		static float errr;
+		static float p; //proportional
+		static float _error;//integrator	
+		static float Viteza_masurata;
+		static float previous_error;
+		static float derivative;	
 		lastMilli2 = millis();
-		p= 30 * error;
-		lasterror;
-		_error=error + lasterror;
-		lasterror=_error;
-		comanda =(p+_error)*0.2*z+0;//(p+_error)*2+25;
-		if (comanda > 255)		{			comanda=255;			lasterror = 215;		}		else if (comanda < 0)		{		  comanda=0;		  //lasterror=0;		}		 
+		//filtrare viteza masurata
+		i[0]=i[1];
+		i[1]=i[2];
+		cli();
+		i[2]=(encoderMotorPos-encoderlast)/perioada_esantionare;//Viteza_masurata=
+		encoderlast=encoderMotorPos;
+		sei();
+		Viteza_masurata=(i[0]+i[1]+i[2])/3;//filtrare viteza masurata
+		errr=viteza_referinta-Viteza_masurata;
+		derivative = ((errr - previous_error)*0.2) / perioada_esantionare; //derivative = (error - previous_error) / dt
+		p= 0.4 * errr; //proportional
+		_error=errr*0.07*perioada_esantionare + resset;//integrator
+		resset=_error;
+		comanda =(p+_error+derivative)*150;//H(r)*EE
+		if (comanda > 255)		{			comanda=255;			resset = 255;		}		else if (comanda < 0)		{			comanda=0;			if (resset<0)	   {resset=0;  }
+		}
+		mot.forward(comanda);
 		Wire.beginTransmission(8);
-		Wire.write(int(Dmasurat));
-		Wire.endTransmission();
+		Wire.write(comanda);		Wire.endTransmission();
 	}
-	  return comanda;
-  }
+	else {delayMicroseconds(50);}
+	return comanda;
+   }
+   
+void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
+	if (buton_red.status() == 1 && buton_black.status() == 1) //ambele butoane apasate
+	{ 
+		int n;
+		boolean flag_mod_setare_pozitie;
+		while (buton_red.status() == 1 || buton_black.status() == 1) {
+			delay(250);
+			n = n + 1;
+			if (n >= 6) {
+				led_green.off();
+				led_red.off();
+				flag_mod_setare_pozitie = true;
+			}
+			else{
+				flag_mod_setare_pozitie = false;
+			}
+		}
+		while (flag_mod_setare_pozitie == true)// daca flag_mod_setare_pozitie este adevarat, atunci se intra in mod de reglare pozitie
+		{
+			if (buton_red.status() == 1)//daca buton rosu este apasat atunci se inainteaza o pozitie
+			{
+				int ecoder_plus_1= encoderMotorPos + 1;
+				while (ecoder_plus_1 > encoderMotorPos)
+				{
+					pid(0.1);
+				}
+				mot.braking();
+				delay(50);
+			}
+			if (buton_black.status() == 1) {
+				encoder0Pos=0;
+				led_green.on();
+				delay(1000);
+				flag_mod_setare_pozitie = false;
+			}
+		}
+	}
+}
