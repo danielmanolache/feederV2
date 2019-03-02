@@ -51,6 +51,7 @@ void press_both_buttons(); //intrare in modul de setare
 #define brown_out A2
 #define directie_motor_pin A3
 volatile int j = 0;
+char t[10];
 
 volatile int encoder0Pos;
 int encoderstop;
@@ -357,11 +358,12 @@ void loop(){
 	press_buton_black();
 	senzor_cap_activ();
 	press_buton_red();   //motor forward
-	resetare_encoder();
+	//resetare_encoder();
 	press_both_buttons();
 	led_green.on();
 	led_red.off();
 	mot.braking();
+	dtostrf(encoderMotorPos, 3, 2, t);  //convers the float or integer to a string. (floatVar, minStringWidthIncDecimalPoint, numVarsAfterDecimal, empty array);
 	if (flag_trimiteI2C==1){
 		trimiteI2C(directie); //trimiteI2C(j);
 		flag_trimiteI2C=0;
@@ -371,7 +373,7 @@ void loop(){
 
 int trimiteI2C(int i){
 	Wire.beginTransmission(8);
-	Wire.write(encoderMotorPos%250);	Wire.endTransmission();
+	Wire.write(t);	Wire.endTransmission();
 	
 	return 0;
 }
@@ -539,11 +541,13 @@ void press_buton_red(){ // forward
 		led_green.off();
 		encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
 		encoderstop=encoderResset+pas;
+
 		//soft start
+		int t;
 		cli();
 		lastMilli=millis();
 		lastMilli2 = millis();
-		int t= millis()-lastMilli; //timpul
+		t = millis()-lastMilli; //timpul
 		sei();
 		const float a = 0.010; //acceleratia
 		int timp_acceleratie = 90;
@@ -552,6 +556,7 @@ void press_buton_red(){ // forward
 		float v; //viteza
 		float v3; // viteza de deccelerare
 		float a3; // acceleratie negativa
+		bool flag_Resset = 1; // flag resetare pozitie oprire la luarea degetului de e buton
 
 		//secventa 1 accelerare
 		while(pasi_parcursi() < 50 && t < timp_acceleratie)   //
@@ -569,20 +574,34 @@ void press_buton_red(){ // forward
 		lastMilli=millis();
 		sei();
 		v=a*timp_acceleratie;
+
 		while(pasi_ramasi() >= pozitie_deceleratie) //pasi_parcursi() <= pas-pozitie_deceleratie
 		{
 			pid(v);
-			if (buton_red.status() == 0)
+			
+			if (buton_red.status() == 0  && flag_Resset == 1)
 			{
 				pas=pasul;
 				cli();
 				encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
 				sei();
-				encoderstop=encoderResset+pas;
-				if (pasi_ramasi() < pozitie_deceleratie-1)
+				if (encoderResset >=0 )
 				{
-					encoderstop=encoderResset+pas+pas;
+					encoderstop=encoderResset+pas;
+					if (pasi_ramasi() < pozitie_deceleratie-1)
+					{
+						encoderstop=encoderResset+pas+pas;
+					}
+				} 
+				else
+				{
+					encoderstop=encoderResset;
+					if (pasi_ramasi() < pozitie_deceleratie-1)
+					{
+						encoderstop=encoderResset+pas;
+					}
 				}
+				flag_Resset = 0;
 			}
 		}
 		//secventa 2 end constant speed
@@ -646,6 +665,7 @@ void press_buton_black(){ // forward
 		float v; //viteza
 		float v3; // viteza de deccelerare
 		float a3; // acceleratie negativa
+		bool flag_Resset = 1; // flag resetare pozitie oprire la luarea degetului de e buton
 
 		//secventa 1 accelerare
 		while(pasi_parcursi_reverse() < 50 && t < timp_acceleratie)   //
@@ -666,17 +686,29 @@ void press_buton_black(){ // forward
 		while(pasi_ramasi_reverse() >= pozitie_deceleratie) //pasi_parcursi() <= pas-pozitie_deceleratie
 		{
 			pid_reverse(v);
-			if (buton_black.status() == 0)
+			if (buton_black.status() == 0  && flag_Resset == 1)
 			{
 				pas=-pasul;
 				cli();
 				encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
 				sei();
-				encoderstop=encoderResset+pas;
-				if (pasi_ramasi_reverse() < pozitie_deceleratie-1)
+				if (encoderResset < 0 )
 				{
-					encoderstop=encoderResset+pas+pas;
+					encoderstop=encoderResset+pas;
+					if (pasi_ramasi_reverse() < pozitie_deceleratie-1)
+					{
+						encoderstop=encoderResset+pas+pas;
+					}
 				}
+				else
+				{
+					encoderstop=encoderResset;
+					if (pasi_ramasi_reverse() < pozitie_deceleratie-1)
+					{
+						encoderstop=encoderResset+pas;
+					}
+				}
+				flag_Resset = 0;
 			}
 		}
 		//secventa 2 end constant speed
@@ -715,13 +747,9 @@ void press_buton_black(){ // forward
 void resetare_encoder(){
 	if (encoderMotorPos > pasul){
 		encoderMotorPos = encoderMotorPos % pasul;
-				 		Wire.beginTransmission(8);
-				 		Wire.write(11);				 		Wire.endTransmission();
 	}
 	if (encoderMotorPos < -pasul){
 		encoderMotorPos = (encoderMotorPos % pasul) ;//+ pasul
-				 		Wire.beginTransmission(8);
-				 		Wire.write(99);				 		Wire.endTransmission();
 	}
 }
 
@@ -774,8 +802,8 @@ int pid(float viteza_referinta){
 		if (comanda > 255)		{			comanda=255;			resset = 255;		}		else if (comanda < 0)		{			comanda=0;			if (resset<0)	   {resset=0;  }
 		}
 		mot.forward(comanda);
-		 		Wire.beginTransmission(8);
-		 		Wire.write(pasi_parcursi());				Wire.endTransmission();
+//		 		Wire.beginTransmission(8);
+//		 		Wire.write(pasi_ramasi());//				Wire.endTransmission();
 	}
 	return comanda;
 }
@@ -813,8 +841,8 @@ int pid_reverse(float viteza_referinta){
 		if (comanda > 255)		{			comanda=255;			resset = 255;		}		else if (comanda < 0)		{			comanda=0;			if (resset<0)	   {resset=0;  }
 		}
 		mot.reverse(comanda);
-		  		Wire.beginTransmission(8);
-		  		Wire.write(pasi_ramasi_reverse());				Wire.endTransmission();
+// 		Wire.beginTransmission(8);
+// 		Wire.write(encoderMotorPos%125+125);//		Wire.endTransmission();
 	}
 	return comanda;
 }
