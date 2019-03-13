@@ -7,6 +7,7 @@
 #include <Wire.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <math.h>
 //Beginning of Auto generated function prototypes by Atmel Studio
 int trimiteI2C (int i);
 void doEncoderMotor();
@@ -18,21 +19,12 @@ int pasi_ramasi(); // pasi ramasi de parcursi pana la stop
 int pasi_ramasi_reverse();// pasi ramasi de parcursi pana la stop in mod de mers inapoi
 int pasi_parcursi(); // pasi care sau parcurs de la utlimul stop calculat
 int pasi_parcursi_reverse(); // pasi care sau parcurs de la utlimul stop calculat in mod de mers inapoi
-int pid(float viteza_referinta);
+int pid(float viteza_referinta, float d);
 int pid_reverse(float viteza_referinta);
 void press_buton_red();
 void press_buton_black();
 void press_both_buttons(); //intrare in modul de setare
-// void doEncoderA();
-// void doEncoderB();
-//void senzor_cap();
-//void senzor_roata();
-// void press_buton1();
-// void press_buton2();
-// void press_both_buttons();
-// void resetare_encoder();
-// void afisare_pozitie();
-// void afisare_eroare();
+
 //End of Auto generated function prototypes by Atmel Studio
 
 //output pins
@@ -50,15 +42,14 @@ void press_both_buttons(); //intrare in modul de setare
 #define senzor_cap_pin 8  //input de la vsop
 #define brown_out A2
 #define directie_motor_pin A3
-volatile int j = 0;
-char t[10];
 
-volatile int encoder0Pos;
 int encoderstop;
 int encoderlast;
 int encoderResset;
-long lastMilli2;//masurare timp discret
+unsigned long lastMilli2;//masurare timp discret
 float resset;
+float previous_error;
+float integral;
 
 //output varibales
 volatile bool flag_trimiteI2C = 0;
@@ -70,10 +61,14 @@ bool flag_roata;
 byte pwm_motor;
 unsigned long lastMilli;
 const int pasul=125;
+const float acceleratia=0.014;
 int pas=125;
+unsigned int t;
+char k[10];
 
 //viteza masurata   - de mutat in functia inainte
 float i[5];
+float ff[5];
 
 //class Button--------------------------------------------------------------
 class Button
@@ -363,7 +358,7 @@ void loop(){
 	led_green.on();
 	led_red.off();
 	mot.braking();
-	dtostrf(encoderMotorPos, 3, 2, t);  //convers the float or integer to a string. (floatVar, minStringWidthIncDecimalPoint, numVarsAfterDecimal, empty array);
+	dtostrf(encoderMotorPos, 3, 2, k);  //convers the float or integer to a string. (floatVar, minStringWidthIncDecimalPoint, numVarsAfterDecimal, empty array);
 	if (flag_trimiteI2C==1){
 		trimiteI2C(directie); //trimiteI2C(j);
 		flag_trimiteI2C=0;
@@ -373,10 +368,10 @@ void loop(){
 
 int trimiteI2C(int i){
 	Wire.beginTransmission(8);
-	Wire.write(t);	Wire.endTransmission();
-	
+	Wire.write(k);	Wire.endTransmission();
 	return 0;
 }
+
 ISR (PCINT0_vect)  //intreruperi senzor_cap vsop
 {
 	if (senzor_cap.status())// ==1 => senzor activat de capul de la robot
@@ -453,67 +448,101 @@ void senzor_cap_activ() {//activare motor inainte
 		led_red.on();
 		led_green.off();
 		pas=pasul;
-		encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+		//verificare pozitie motor si calculare urmatorul stop
+		if (encoderMotorPos % pasul > pasul-10)//daca motorul a mers inapoi cativa pasi atunci nu se tine cont de ei
+		{
+			encoderResset = encoderMotorPos - ( encoderMotorPos % pasul) + pasul;
+		}
+		else
+		{
+			encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+		}
 		encoderstop=encoderResset+pas;
 		while (flag_inainte == 1) {                           //inainteaza
 			//soft start
 			cli();
 			lastMilli=millis();
 			lastMilli2 = millis();
-			int t= millis()-lastMilli; //timpul
+			t = millis()-lastMilli;
 			sei();
-			const float a = 0.010; //acceleratia
-			int timp_acceleratie = 90;
-			int pozitie_deceleratie=((timp_acceleratie-4)/2)/(100*a);
+			float a = acceleratia; //acceleratia
+			int timp_acceleratie = 100;
+			int pozitie_deceleratie;
 			encoderlast=encoderMotorPos;
 			float v; //viteza
-			float v3; // viteza de deccelerare
-			float a3; // acceleratie negativa
+			float d;
+			bool flag_Resset = 1; // flag resetare pozitie oprire la luarea degetului de e buton
 
 			//secventa 1 accelerare
-			while(pasi_parcursi() < 50 && t < timp_acceleratie)   //
+			while(pasi_ramasi() > 60 && t < timp_acceleratie)   //timp_acceleratie
 			{
-				cli();
-				t = millis()-lastMilli;
-				sei();
 				v=a*t;
-				pid(v);// calculare pid si comanda motor
+				pid(v,d);// calculare pid si comanda motor
 			}
 			//secventa 1 end accelerare
 
 			//secventa 2 constant speed
 			cli();
 			lastMilli=millis();
+			t = millis()-lastMilli;
 			sei();
 			v=a*timp_acceleratie;
-			while(pasi_ramasi() >= pozitie_deceleratie) //pasi_parcursi() <= pas-pozitie_deceleratie
+			d=((a*timp_acceleratie)/2)*timp_acceleratie;
+			
+			pozitie_deceleratie = d;
+			while(pasi_ramasi() >= pozitie_deceleratie) // >=pozitie_deceleratie
 			{
-				pid(v);
+				pid(v,d);
+				if (buton_red.status() == 0  && flag_Resset == 1)
+				{
+					pas=pasul;
+					cli();
+					encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+					sei();
+					if (encoderResset >=0 )
+					{
+						encoderstop=encoderResset+pas;
+						if (pasi_ramasi() < pozitie_deceleratie-1)
+						{
+							encoderstop=encoderResset+pas+pas;
+						}
+					}
+					else
+					{
+						encoderstop=encoderResset;
+						if (pasi_ramasi() < pozitie_deceleratie-1)
+						{
+							encoderstop=encoderResset+pas;
+						}
+					}
+					flag_Resset = 0;
+				}
 			}
 			//secventa 2 end constant speed
 			
-			//secventa 3 - deccelerare
-			a3 = -a; // acceleratie negativa
+
+			//----------------
 			cli();
 			lastMilli=millis();
+			t = millis()-lastMilli;
 			sei();
-			while(pasi_ramasi() >= 3){//pasi_parcursi() <= pas-3
-				cli();
-				t = millis()-lastMilli;
-				sei();
-				v3 = v + a3 * t; //viteza de referinta
-				if (v3 < 0.15)
+			
+			while(pasi_ramasi() >= 5){//pasi_parcursi() <= pas-3
+				v=sqrt((pasi_ramasi()-2)*2*acceleratia);//viteza de referinta se calculeaza in funcie de distanta ramasa v(d)
+				if (v < 0.15)
 				{
-					v3=0.15;
+					v=0.15;
 				}
-				pid(v3);//pwm_motor=pid(v3);
+				pid(v,d);//pwm_motor=pid(v3);
 			}
 			//secventa 3 end - deccelerare
+
+			v=0.15;
 			
 			//secventa 4 - viteza constanta la oprire
 			while(pasi_ramasi() > 0)
 			{
-				pid(0.15); //viteza-referinta v4 = 0.1
+				pid(v,d); //viteza-referinta v4 = 0.1
 			}
 			//secventa 4 end viteza constanta la oprire
 			
@@ -521,7 +550,11 @@ void senzor_cap_activ() {//activare motor inainte
 			led_red.off();
 			flag_inainte = 0;
 			flag_trimiteI2C=1;
-			resset=0;  //eroarea cumulata de la pid se reseteaza
+			previous_error=0;//eroarea cumulata de la pid se reseteaza
+			integral=0;//eroarea cumulata de la pid se reseteaza
+			ff[0]=0;
+			ff[1]=0;
+			ff[2]=0;
 		}
 	}
 }
@@ -539,46 +572,51 @@ void press_buton_red(){ // forward
 		}
 		led_red.on();
 		led_green.off();
-		encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+		//verificare pozitie motor si calculare urmatorul stop
+		if (encoderMotorPos % pasul > pasul-10)//daca motorul a mers inapoi cativa pasi atunci nu se tine cont de ei
+		{
+			encoderResset = encoderMotorPos - ( encoderMotorPos % pasul) + pasul;
+		}
+		else
+		{
+			encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
+		}
 		encoderstop=encoderResset+pas;
 
 		//soft start
-		int t;
 		cli();
 		lastMilli=millis();
 		lastMilli2 = millis();
-		t = millis()-lastMilli; //timpul
+		t = millis()-lastMilli; 
 		sei();
-		const float a = 0.010; //acceleratia
-		int timp_acceleratie = 90;
-		int pozitie_deceleratie=((timp_acceleratie-4)/2)/(100*a);
+		float a = acceleratia; //acceleratia
+		int timp_acceleratie = 100;
+		int pozitie_deceleratie;
 		encoderlast=encoderMotorPos;
 		float v; //viteza
-		float v3; // viteza de deccelerare
-		float a3; // acceleratie negativa
+		float d;
 		bool flag_Resset = 1; // flag resetare pozitie oprire la luarea degetului de e buton
 
 		//secventa 1 accelerare
-		while(pasi_parcursi() < 50 && t < timp_acceleratie)   //
+		while(pasi_ramasi() > 60 && t < timp_acceleratie)   //timp_acceleratie
 		{
-			cli();
-			t = millis()-lastMilli;
-			sei();
 			v=a*t;
-			pid(v);// calculare pid si comanda motor
+			pid(v,d);// calculare pid si comanda motor
 		}
 		//secventa 1 end accelerare
 
 		//secventa 2 constant speed
 		cli();
 		lastMilli=millis();
+		t = millis()-lastMilli;
 		sei();
 		v=a*timp_acceleratie;
-
-		while(pasi_ramasi() >= pozitie_deceleratie) //pasi_parcursi() <= pas-pozitie_deceleratie
+		d=((a*timp_acceleratie)/2)*timp_acceleratie;
+		
+		pozitie_deceleratie = d;
+		while(pasi_ramasi() >= pozitie_deceleratie) // >=pozitie_deceleratie
 		{
-			pid(v);
-			
+			pid(v,d);
 			if (buton_red.status() == 0  && flag_Resset == 1)
 			{
 				pas=pasul;
@@ -606,34 +644,39 @@ void press_buton_red(){ // forward
 		}
 		//secventa 2 end constant speed
 		
-		//secventa 3 - deccelerare
-		a3 = -a; // acceleratie negativa
+
+		//----------------
 		cli();
 		lastMilli=millis();
+		t = millis()-lastMilli;
 		sei();
-		while(pasi_ramasi() >= 3){//pasi_parcursi() <= pas-3
-			cli();
-			t = millis()-lastMilli;
-			sei();
-			v3 = v + a3 * t; //viteza de referinta
-			if (v3 < 0.15)
+		
+		while(pasi_ramasi() >= 5){//pasi_parcursi() <= pas-3
+			v=sqrt((pasi_ramasi()-2)*2*acceleratia);//viteza de referinta se calculeaza in funcie de distanta ramasa v(d)
+			if (v < 0.15)
 			{
-				v3=0.15;
+				v=0.15;
 			}
-			pid(v3);//pwm_motor=pid(v3);
+			pid(v,d);//pwm_motor=pid(v3);
 		}
 		//secventa 3 end - deccelerare
+
+		v=0.15;
 		
 		//secventa 4 - viteza constanta la oprire
 		while(pasi_ramasi() > 0)
 		{
-			pid(0.15); //viteza-referinta v4 = 0.1
+			pid(v,d); //viteza-referinta v4 = 0.1
 		}
 		//secventa 4 end viteza constanta la oprire
 		mot.braking();
 		led_red.off();
 		flag_trimiteI2C=1;
-		resset=0;  //eroarea cumulata de la pid se reseteaza
+		previous_error=0;//eroarea cumulata de la pid se reseteaza
+		integral=0;//eroarea cumulata de la pid se reseteaza
+		ff[0]=0;
+		ff[1]=0;
+		ff[2]=0;
 	}
 }
 
@@ -656,9 +699,9 @@ void press_buton_black(){ // forward
 		cli();
 		lastMilli=millis();
 		lastMilli2 = millis();
-		int t= millis()-lastMilli; //timpul
+		t= millis()-lastMilli; //timpul
 		sei();
-		const float a = 0.010; //acceleratia
+		float a = acceleratia; //acceleratia
 		int timp_acceleratie = 90;
 		int pozitie_deceleratie=((timp_acceleratie-4)/2)/(100*a);
 		encoderlast=encoderMotorPos;
@@ -769,43 +812,53 @@ int pasi_parcursi_reverse(){
 	return -pas-(encoderMotorPos-encoderstop);
 }
 
-int pid(float viteza_referinta){
-	static int comanda;
-	static int z;
-	static const float perioada_esantionare=4;
+int pid(float viteza_referinta, float d){
+	static float output;
+	static unsigned int z;
+	static const float dt=3;//perioada_esantionare
+
 	cli();
+	t = millis()-lastMilli;
 	z = millis()-lastMilli2;//timpul scurs de la utima apelare a functiei
 	sei();
-	if (z > perioada_esantionare)//daca au trecut .... milisec atunci se masoara
+	
+	if (z > dt)//daca au trecut .... milisec atunci se masoara
 	{
-		static float errr;
-		static float p; //proportional
-		static float _error;//integrator
+		static const float Kp=60;
+		static const float Ki=10;
+		static const float Kd=30;
 		static float Viteza_masurata;
-		static float previous_error;
+		static float error;
 		static float derivative;
-		lastMilli2 = millis();
-		//filtrare viteza masurata
-		i[0]=i[1];
-		i[1]=i[2];
+
+		
 		cli();
-		i[2]=(encoderMotorPos-encoderlast)/perioada_esantionare;//Viteza_masurata=
+		lastMilli2 = millis();
+		sei();
+		
+		//filtrare viteza masurata		
+		ff[0]=ff[1];
+		ff[1]=ff[2];
+		cli();
+		ff[2]=(encoderMotorPos-encoderlast)/dt;//Viteza_masurata=
 		encoderlast=encoderMotorPos;
 		sei();
-		Viteza_masurata=(i[0]+i[1]+i[2])/3;//filtrare viteza masurata
-		errr=viteza_referinta-Viteza_masurata;
-		derivative = ((errr - previous_error)*0.2) / perioada_esantionare; //derivative = (error - previous_error) / dt
-		p= 0.4 * errr; //proportional
-		_error=errr*0.07*perioada_esantionare + resset;//integrator
-		resset=_error;
-		comanda =(p+_error+derivative)*150;//H(r)*EE
-		if (comanda > 255)		{			comanda=255;			resset = 255;		}		else if (comanda < 0)		{			comanda=0;			if (resset<0)	   {resset=0;  }
+		Viteza_masurata=(ff[0]+ff[1]+ff[2])/3;//filtrare viteza masurata
+		error=viteza_referinta-Viteza_masurata;//setpoint - measured_value
+		integral = integral + error * dt;
+		derivative = ((ff[0]+ff[1]+ff[2])/3 - previous_error) / dt;
+		output = Kp * error + Ki * integral + Kd * derivative;
+		previous_error = error;
+		//_______________
+		
+
+		if (output > 255)		{			output=255;			integral = 255;		}		else if (output < 0)		{			output=0;			if (integral<0)	   {integral=0;  }
 		}
-		mot.forward(comanda);
-//		 		Wire.beginTransmission(8);
-//		 		Wire.write(pasi_ramasi());//				Wire.endTransmission();
+		mot.forward(output);
+		 		Wire.beginTransmission(8);
+		 		Wire.write(int(output));  				Wire.endTransmission();
 	}
-	return comanda;
+	return output;
 }
 
 int pid_reverse(float viteza_referinta){
@@ -821,9 +874,11 @@ int pid_reverse(float viteza_referinta){
 		static float p; //proportional
 		static float _error;//integrator
 		static float Viteza_masurata;
-		static float previous_error;
-		static float derivative;
+		static float previous_err;
+		static float derivativ;
+		cli();
 		lastMilli2 = millis();
+		sei();
 		//filtrare viteza masurata
 		i[0]=i[1];
 		i[1]=i[2];
@@ -833,11 +888,11 @@ int pid_reverse(float viteza_referinta){
 		sei();
 		Viteza_masurata=(i[0]+i[1]+i[2])/3;//filtrare viteza masurata
 		errr=viteza_referinta-Viteza_masurata;
-		derivative = ((errr - previous_error)*0.2) / perioada_esantionare; //derivative = (error - previous_error) / dt
+		derivativ = ((errr - previous_err)*0.2) / perioada_esantionare; //derivativ = (error - previous_err) / dt
 		p= 0.4 * errr; //proportional
 		_error=errr*0.07*perioada_esantionare + resset;//integrator
 		resset=_error;
-		comanda =(p+_error+derivative)*150;//H(r)*EE
+		comanda =(p+_error+derivativ)*150;//H(r)*EE
 		if (comanda > 255)		{			comanda=255;			resset = 255;		}		else if (comanda < 0)		{			comanda=0;			if (resset<0)	   {resset=0;  }
 		}
 		mot.reverse(comanda);
@@ -851,6 +906,7 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 	if (buton_red.status() == 1 && buton_black.status() == 1) //ambele butoane apasate
 	{
 		int n;
+		float d;
 		boolean flag_mod_setare_pozitie;
 		led_red.on(); //se aprind ambele leduri
 		while (buton_red.status() == 1 || buton_black.status() == 1) {
@@ -876,7 +932,7 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 				resset=0;
 				while (ecoder_plus_1 > encoderMotorPos)
 				{
-					pid(0.1);
+					pid(0.1,d);
 				}
 				mot.braking();
 				led_red.off();
