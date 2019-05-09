@@ -320,7 +320,8 @@ void setup(){
 	lungime_pas_mm = EEPROM.read(110); //dimensiunea pasului in mm
 	pasul = lungime_pas_mm*125/2;
 	SLAVE_ADRESS = adress_b1 << 16 | adress_b2 <<8 | adress_b3;// adresa I2C
-	encoderMotorPos= EEPROM.read(1);
+	encoderMotorPos= EEPROM.read(1) + (EEPROM.read(0) << 8);
+
 	
 	//OUTPUT PINS
 
@@ -383,13 +384,13 @@ void setup(){
 	sei();                     // turn on interrupt
 	delay(100);
 	flag_inainte=0;
-	if ((encoderMotorPos % pasul) > 3 )//daca encodermotorposition este mult in afara atunci se atetioneaza
+	if ((encoderMotorPos % pasul) <= 3 || (encoderMotorPos % pasul) >= (pasul-3) )//daca encodermotorposition este mult in afara atunci se atetioneaza
 	{
-		led_red.on();
+		led_red.off();
 	}
 	else
 	{
-		led_red.off();
+		led_red.on();
 	}
 }
 
@@ -462,6 +463,7 @@ ISR (PCINT1_vect) //intreruperi brown_out
 		led_green.off();
 		mot.braking();
 		EEPROM.write(1, (encoderMotorPos % pasul));//SCRIE IN MEMORIE
+		EEPROM.write(0, ((encoderMotorPos % pasul)>>8));//SCRIE IN MEMORIE
 	}
 }
 
@@ -565,7 +567,7 @@ int activare_motor(){ // forward
 		int timp_acceleratie;
 		if (pas >125)
 		{
-			timp_acceleratie = 125;
+			timp_acceleratie = 145;
 		}
 		else
 		{
@@ -595,7 +597,7 @@ int activare_motor(){ // forward
 		sei();
 		v=a*timp_acceleratie;
 		d=((a*timp_acceleratie)/2)*timp_acceleratie;
-		pozitie_deceleratie = d;
+		pozitie_deceleratie = 50;
 		while(pasi_ramasi() >= pozitie_deceleratie) // >=pozitie_deceleratie
 		{
 			pid(v);
@@ -622,7 +624,6 @@ int activare_motor(){ // forward
 			}
 		}
 		//secventa 2 end constant speed
-		
 
 		//----------------
 		cli();
@@ -641,7 +642,7 @@ int activare_motor(){ // forward
 		//secventa 3 end - deccelerare
 
 		v=0.15;
-		
+
 		//secventa 4 - viteza constanta la oprire
 		while(pasi_ramasi() > 0)
 		{
@@ -659,9 +660,9 @@ int activare_motor(){ // forward
 		ff[2]=0;
 		delay(20);
 		flag_inainte=0;
-
 	}
 	return 0;
+
 }
 
 void resetare_encoder(){
@@ -748,7 +749,7 @@ int pid(float viteza_referinta){
 		}
 		
 				Wire.beginTransmission(10);
-				Wire.write(output);
+				Wire.write(pasi_ramasi());
 				Wire.endTransmission();
 	}
 	return output;
@@ -786,6 +787,7 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 		//ajustare microstep
 		while (flag_mod_setare_pozitie == true)// daca flag_mod_setare_pozitie este adevarat, atunci se intra in mod de reglare pozitie
 		{
+			led_red.off();
 			while (flag_inainte == 1) {
 				if (buton_red.status() == 1)//daca buton rosu este apasat atunci se inainteaza o pozitie
 				{
