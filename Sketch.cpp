@@ -14,7 +14,6 @@ int trimiteI2C (int i);
 void doEncoderMotor();
 void doEncoderRoata();
 void senzor_cap_activ();
-void resetare_encoder();
 uint16_t pasi_ramasi(); // pasi ramasi de parcursi pana la stop
 uint16_t pasi_parcursi(); // pasi care sau parcurs de la utlimul stop calculat
 int pid(float viteza_referinta);
@@ -44,9 +43,7 @@ uint8_t citire_secventa_butoane(uint8_t a);
 #define brown_out A2
 #define directie_motor_pin A3
 
-uint16_t encoderstop; //))))))))))))) uint16_t
 uint16_t encoderlast;
-uint16_t encoderResset;
 unsigned long lastMilli2;//masurare timp discret
 float previous_error;
 float integral;
@@ -54,14 +51,14 @@ float integral;
 //output varibales
 volatile bool flag_trimiteI2C = 0;
 volatile uint8_t portDhistory = 0xFF;
-volatile int directie;
-volatile uint16_t encoderMotorPos;//))))))))))))))) uint16_t
-int8_t flag_inainte;
+volatile uint16_t encoderMotorPos;//))))))))))))))) 
+volatile int8_t flag_directie;
 int8_t flag_low_voltage;
 bool flag_roata;
 byte pwm_motor;
 unsigned long lastMilli;
 uint16_t pasul;
+volatile bool flag_power;
 
 uint8_t lungime_pas_mm;
 const float acceleratia=0.016;
@@ -283,7 +280,7 @@ Motor mot(PORTB1, PORTB2);
 Button buton_red(PORTD6);
 Button buton_black(PORTD7);
 SenzorCap senzor_cap(PORTB0);
-EcoderMotor encoder_directie(PORTC3);
+EcoderMotor encoder_motor(PORTC3);
 
 //end class--------------------------------------------------------------
 
@@ -320,7 +317,7 @@ void setup(){
 	lungime_pas_mm = EEPROM.read(110); //dimensiunea pasului in mm
 	pasul = lungime_pas_mm*125/2;
 	SLAVE_ADRESS = adress_b1 << 16 | adress_b2 <<8 | adress_b3;// adresa I2C
-	encoderMotorPos= EEPROM.read(1) + (EEPROM.read(0) << 8);
+	encoderMotorPos = (EEPROM.read(1) + (EEPROM.read(0) << 8)) % pasul;
 
 	
 	//OUTPUT PINS
@@ -328,14 +325,10 @@ void setup(){
 	DDRE = 0b00001111;
 	PORTE = 0b00000111; // activare npn PE3 LOW
 
-
-	//pinMode(m_forward, OUTPUT); //s-a definit la crearea obiecului mot clasa Motor
-	//pinMode(m_reverse, OUTPUT); //s-a definit la crearea obiecului mot clasa Motor
 	pinMode(semnal_38k, OUTPUT);
 	Wire.begin(adress_b1);
 	Wire.onReceive(receiveEvent);
 	//input pins
-	//pinMode(senzor_cap_pin, INPUT); //input de la iesirea vsop, s-a definit la crearea obiecului senzor_cap clasa SenzorCap
 	pinMode(senzor2_cap, INPUT);
 	pinMode(senzor_roata, INPUT);
 	pinMode(directie_motor_pin, INPUT);
@@ -348,10 +341,10 @@ void setup(){
 	
 	//portD=================================================== intreruperi buton_red si Buton _black
 	DDRD &= ~((1 << DDD6) | (1 << DDD7)); // Clear the PC2 pin
-	// Pd7 (PCINT23 pin)is now inputs
+	// PD (PCINT23 pin)is now inputs
 
 	PORTD |= ((1 << PORTD6) | (1 << PORTD7)); // turn On the Pull-up
-	// PC2 is now input with pull-up enabled
+	// PD is now input with pull-up enabled
 
 	PCICR |= (1 << PCIE2);     // set PCIE2 to enable PCMSK2 scan
 	PCMSK2 |= (1 << PCINT22) | (1 << PCINT23);   // set PCINT23 to trigger an interrupt on state change
@@ -373,8 +366,6 @@ void setup(){
 
 	PCICR |= (1 << PCIE0);     // set PCIE to enable PCMSK1 scan
 	PCMSK0 |= (1 << PCINT0);   // set PCINT to trigger an interrupt on state change
-	
-	
 
 	led_green.on();
 	led_red.on();
@@ -383,7 +374,7 @@ void setup(){
 	//in caz ca a aparut o intrerupere intrerupt lumina la pornire atunci se
 	sei();                     // turn on interrupt
 	delay(100);
-	flag_inainte=0;
+	flag_directie=0;
 	if ((encoderMotorPos % pasul) <= 3 || (encoderMotorPos % pasul) >= (pasul-3) )//daca encodermotorposition este mult in afara atunci se atetioneaza
 	{
 		led_red.off();
@@ -398,34 +389,22 @@ void setup(){
 void loop(){
 	seleep_enable();
 	activare_motor();   //motor forward
-	resetare_encoder();
 	press_both_buttons();
 	mot.braking();
 	reset_pid_variables();//resset error, integral and derivative to 0
-	// 	dtostrf(encoderMotorPos, 3, 2, k);  //convers the float or integer to a string. (floatVar, minStringWidthIncDecimalPoint, numVarsAfterDecimal, empty array);
-	// 	if (flag_trimiteI2C==1){
-	// 		trimiteI2C(directie); //trimiteI2C(j);
-	// 		flag_trimiteI2C=0;
-	// 	}
-	
-	//////trimite pozitie roata
-// 	if (flag_roata==1){
-// 		// 		trimiteI2C(directie); //trimiteI2C(j);
-// 		for(int i=0;i<kk;i++){
-// 			trimiteI2C(ii[i]);
-// 			//ii[i];
-// 		}
-// 		kk=0;
-// 		flag_roata=0;
-// 	}
+	trimiteI2C(1);
 	send_i2c_response();
 	delayMicroseconds(50);
 }
 
 int trimiteI2C(int i){
-	Wire.beginTransmission(10);
-	Wire.write(i);
-	Wire.endTransmission();
+	if (flag_trimiteI2C == 1)
+	// 	dtostrf(encoderMotorPos, 3, 2, k);  //convers the float or integer to a string. (floatVar, minStringWidthIncDecimalPoint, numVarsAfterDecimal, empty array);
+	{
+		Wire.beginTransmission(10);
+		Wire.write(i);
+		Wire.endTransmission();
+	}
 	return 0;
 }
 
@@ -434,12 +413,12 @@ ISR (PCINT0_vect)  //intreruperi senzor_cap vsop
 	
 	if (senzor_cap.status())// ==1 => senzor activat de capul de la robot
 	{
-		if (flag_inainte==0)
+		if (flag_directie==0)
 		{
 			delayMicroseconds(500);
 			if (senzor_cap.status()){
 				led_red.on();
-				flag_inainte=1;
+				flag_directie=1;
 			}
 		}
 	}
@@ -476,10 +455,9 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
 	{
 		/* PCINT22 changed */
 		if(buton_black.status()==1){
-			if (flag_inainte==0)
+			if (flag_directie==0)
 			{
-				
-				flag_inainte=-1;
+				flag_directie=-1;
 			}
 		}
 		else{
@@ -490,9 +468,9 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
 	if(changedbits & (1 << PIND6)) //buton rosu
 	{
 		if(buton_red.status()==1){
-			if (flag_inainte==0)
+			if (flag_directie==0)
 			{
-				flag_inainte=1;
+				flag_directie=1;
 			}
 		}
 		else{
@@ -501,60 +479,85 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
 	}
 }
 
+
 void doEncoderMotor()
 {
-	if (flag_inainte |=0)
+	if(flag_directie == 1) //incrementare
 	{
-		directie = flag_inainte;
+		encoderMotorPos++;
+	}
+	else if (flag_directie == -1) //decrementare
+	{
+		encoderMotorPos--;
 	}
 	else
 	{
-		directie=encoder_directie.directie();
+		encoderMotorPos=encoderMotorPos+encoder_motor.directie();
 	}
-	cli();
-	encoderMotorPos = encoderMotorPos + directie;
-	sei();
+
+	if (encoderMotorPos == pasul+1) // resetare encoder
+	{
+		encoderMotorPos=1;
+	}
+	
+	if (encoderMotorPos == pasul/2)
+	{
+		if (buton_red.status()== 0 && buton_black.status()== 0 )
+		{
+			flag_power=0;
+		}
+	}
+	
+	if ((flag_power == 0) && (encoderMotorPos == 1))
+	{
+		mot.braking();
+		flag_directie=0;
+		led_red.off();
+		led_green.on();
+		
+	}	
+
+	if (encoderMotorPos == 0) // resetare encoder
+	{
+		encoderMotorPos=pasul;
+	}	
+
 }
 
 void  doEncoderRoata() {
-	ii[kk]=encoderMotorPos%pasul;
+	ii[kk]=encoderMotorPos;
 	kk=kk+1;
 	flag_roata = 1;
+	if (kk==28)
+	{
+		kk=0;
+	}
+	flag_trimiteI2C=0;
 }
 
 int activare_motor(){ // forward
-	if((flag_inainte |= 0 || senzor_cap.status() == 1) && flag_low_voltage == 0){ //))))))))))))))))) if(flag_inainte == 1 && buton_black.status()==0){
+	if((flag_directie |= 0 || senzor_cap.status() == 1) && flag_low_voltage == 0){ //))))))))))))))))) if(flag_directie == 1 && buton_black.status()==0){
 		if (buton_red.status()== 1 || buton_black.status()== 1) {			delay(250); 		}
 		while (senzor_cap.status() == 1) { //senzor cap activ, se aprinde ledul si se asteapta sa se retraga
 			led_red.on();
 		}
+		flag_power=1;
 		if (buton_red.status()== 1 &&  buton_black.status()== 1)
 		{
-			flag_inainte=0;
+			flag_directie=0;
+			flag_power=0;
 		}
 		if (buton_red.status()== 1 && buton_black.status()==0 || buton_black.status()== 1 && buton_red.status()==0)
 		{
-			pas=28500*flag_inainte;
+			pas=28500*flag_directie;
 		}
 		else
 		{
-			pas=pasul*flag_inainte;//))))))))))))))))))))))))  pas=pasul*flag_inainte; encoderMotorPos = encoderMotorPos % pasul+32500;
+			pas=pasul*flag_directie;//))))))))))))))))))))))))  pas=pasul*flag_directie; encoderMotorPos = encoderMotorPos % pasul+32500;
 		}
 		led_red.on();
 		led_green.off();
 		//verificare pozitie motor si calculare urmatorul stop
-		cli();
-		if (encoderMotorPos % pasul > pasul-10)//daca motorul a mers inapoi cativa pasi atunci se calculeaza diferit encoderResset
-		{
-			encoderResset = encoderMotorPos - ( encoderMotorPos % pasul) + pasul;
-		}
-		else
-		{
-			encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
-		}
-		sei();
-		
-		encoderstop=encoderResset+pas;
 		
 
 		//soft start
@@ -579,11 +582,10 @@ int activare_motor(){ // forward
 		encoderlast=encoderMotorPos;
 		sei();
 		float v; //viteza
-		float d;
-		bool flag_Resset = 1; // flag resetare pozitie oprire la luarea degetului de e buton
+		float d; //distanta
 
 		//secventa 1 accelerare
-		while(pasi_parcursi() < (pasul/2) && t < timp_acceleratie)   //timp_acceleratie
+		while(t < timp_acceleratie)   //timp_acceleratie
 		{
 			v=a*t;
 			pid(v);// calculare pid si comanda motor
@@ -598,40 +600,17 @@ int activare_motor(){ // forward
 		v=a*timp_acceleratie;
 		d=((a*timp_acceleratie)/2)*timp_acceleratie;
 		pozitie_deceleratie = 50;
-		while(pasi_ramasi() >= pozitie_deceleratie) // >=pozitie_deceleratie
+		while((pasi_ramasi() >= pozitie_deceleratie) || (flag_power == 1)) // >=pozitie_deceleratie
 		{
 			pid(v);
-			if (buton_red.status() == 0 && buton_black.status() == 0 && flag_Resset == 1)
-			{
-				pas=pasul*flag_inainte;//)))))))))))))pasul*flag_inainte
-				cli();
-				if (encoderMotorPos % pasul > pasul-pozitie_deceleratie)//daca motorul a mers inapoi cativa pasi atunci se calculeaza diferit encoderResset
-				{
-					encoderResset = encoderMotorPos - ( encoderMotorPos % pasul) + pasul;
-				}
-				else
-				{
-					encoderResset = encoderMotorPos - ( encoderMotorPos % pasul);
-				}
-				sei();
-				//daca motorul a trecut de pozitia de decleratie atunci se mai adauga un pas la pozitia de oprire
-				encoderstop=encoderResset+pas;
-				if (pasi_ramasi() < pozitie_deceleratie-1)
-				{
-					encoderstop=encoderResset+pas+pas;
-				}
-				flag_Resset = 0;
-			}
 		}
 		//secventa 2 end constant speed
-
 		//----------------
 		cli();
 		lastMilli=millis();
 		t = millis()-lastMilli;
 		sei();
-		
-		while(pasi_ramasi() >= 5){//pasi_parcursi() <= pas-3
+				while(pasi_ramasi() >= 5){//
 			v=sqrt((pasi_ramasi()-3)*2*acceleratia);//viteza de referinta se calculeaza in funcie de distanta ramasa v(d)
 			if (v < 0.15)
 			{
@@ -644,49 +623,56 @@ int activare_motor(){ // forward
 		v=0.15;
 
 		//secventa 4 - viteza constanta la oprire
-		while(pasi_ramasi() > 0)
+		while(flag_directie |= 0)
 		{
 			pid(v); //viteza-referinta v4 = 0.1
 		}
 		//secventa 4 end viteza constanta la oprire
-		mot.braking();
-		led_red.off();
-		led_green.on();
+		
 		flag_trimiteI2C=1;
 		previous_error=0;//eroarea cumulata de la pid se reseteaza
 		integral=0;//eroarea cumulata de la pid se reseteaza
 		ff[0]=0;
 		ff[1]=0;
 		ff[2]=0;
-		delay(20);
-		flag_inainte=0;
 	}
 	return 0;
-
-}
-
-void resetare_encoder(){
-	if (encoderMotorPos < 30000  || encoderMotorPos > 35000 ){
-		cli();
-		encoderMotorPos = (encoderMotorPos % pasul) + 32500 - ( 32500 % pasul);
-		sei();
-	}
 }
 
 uint16_t pasi_ramasi(){
 	uint16_t p;
-	cli();
-	p = encoderstop*flag_inainte-encoderMotorPos*flag_inainte;
-	sei();
-	return p;
+	if (flag_directie == 1)
+	{
+		cli();
+		p=(pasul-encoderMotorPos)*flag_directie;
+		sei();
+		return p;
+	} 
+	else
+	{
+		cli();
+		p=encoderMotorPos*(-flag_directie);
+		sei();
+		return p;
+	}
 }
 
 uint16_t pasi_parcursi(){
 	uint16_t p;
-	cli();
-	p = pas*flag_inainte-(encoderstop*flag_inainte-encoderMotorPos*flag_inainte);
-	sei();
-	return p;
+	if (flag_directie ==1)
+	{
+		cli();
+		p=encoderMotorPos;
+		sei();
+		return p;
+	} 
+	else
+	{
+		cli();
+		p=(pasul+1-encoderMotorPos)*(-flag_directie);
+		sei();
+		return p;
+	}
 }
 
 int pid(float viteza_referinta){
@@ -707,6 +693,11 @@ int pid(float viteza_referinta){
 		static float Viteza_masurata;
 		static float error;
 		static float derivative;
+		cli();
+		int16_t _encoderMotorPos=encoderMotorPos;
+		sei();
+		int16_t _encoderlast=encoderlast;
+		encoderlast=_encoderMotorPos;
 
 		
 		cli();
@@ -716,10 +707,25 @@ int pid(float viteza_referinta){
 		//filtrare viteza masurata
 		ff[0]=ff[1];
 		ff[1]=ff[2];
-		cli();
-		ff[2]=(encoderMotorPos*flag_inainte-encoderlast*flag_inainte)/dt;//Viteza_masurata=
-		encoderlast=encoderMotorPos;
-		sei();
+
+		//Viteza_masurata calculata in functie directia motorului	
+		if (_encoderMotorPos >=_encoderlast)
+		{
+			ff[2]=(_encoderMotorPos-_encoderlast)/dt;
+			if (_encoderMotorPos-_encoderlast > pasul/2)
+			{
+				ff[2]=(_encoderlast+pasul-_encoderMotorPos)/dt;
+			} 
+		} 
+		else
+		{
+			ff[2]=(_encoderlast-_encoderMotorPos)/dt;
+			if (_encoderlast-_encoderMotorPos > pasul/2)
+			{
+				ff[2]=(_encoderMotorPos+pasul-_encoderlast)/dt;
+			}
+		}
+		
 		Viteza_masurata=(ff[0]+ff[1]+ff[2])/3;//filtrare viteza masurata
 		error=viteza_referinta-Viteza_masurata;//setpoint - measured_value
 		integral = integral + error * dt;
@@ -739,17 +745,17 @@ int pid(float viteza_referinta){
 			output=0;
 			if (integral<0)	   {integral=0;  }
 		}
-		if (flag_inainte == 1)
+		if (flag_directie == 1)
 		{
 			mot.forward(output);
 		}
-		if (flag_inainte == -1)
+		if (flag_directie == -1)
 		{
 			mot.reverse(output);
 		}
 		
 				Wire.beginTransmission(10);
-				Wire.write(pasi_ramasi());
+				Wire.write(pasi_parcursi());
 				Wire.endTransmission();
 	}
 	return output;
@@ -776,6 +782,7 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 			n = n + 1;
 			if (n >= 6) {  //daca a treut timpul de 1500 ms atunci se sting ambele leduri
 				led_green.off();
+				led_red.off();
 				flag_mod_setare_pozitie = true;
 			}
 			else{
@@ -788,7 +795,7 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 		while (flag_mod_setare_pozitie == true)// daca flag_mod_setare_pozitie este adevarat, atunci se intra in mod de reglare pozitie
 		{
 			led_red.off();
-			while (flag_inainte == 1) {
+			while (flag_directie == 1) {
 				if (buton_red.status() == 1)//daca buton rosu este apasat atunci se inainteaza o pozitie
 				{
 					led_red.on();
@@ -810,11 +817,11 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 					led_green.on();
 					delay(500);
 					flag_mod_setare_pozitie = false;
-					flag_inainte=0;
+					flag_directie=0;
 				}
 			}
 			//cod de la butoane
-			if (flag_inainte == -1) {
+			if (flag_directie == -1) {
 				cod_butoane = citire_secventa_butoane(cod_butoane);
 				switch (cod_butoane) {
 					case 1:
@@ -965,7 +972,7 @@ int seleep_enable(){// going to sleep is voltage BOD detection
 		// 		EIFR |= (1<<INTF0);
 		// 		PCIFR |= (1<<PCIF0) | (1<<PCIF2);
 		led_red.off();
-		flag_inainte=0;
+		flag_directie=0;
 		flag_low_voltage = 0;
 	}
 	else{
@@ -981,15 +988,15 @@ uint8_t citire_secventa_butoane(uint8_t a) {
 	int i = 0;
 	int8_t j = 2;
 	while ( (j > -1) && (i < 1000)) {
-		if (flag_inainte == 1) {
+		if (flag_directie == 1) {
 			v |= (1 << j);
-			flag_inainte = 0;
+			flag_directie = 0;
 			j--;
 			i = 0;
 		}
-		if (flag_inainte == -1) {
+		if (flag_directie == -1) {
 			v &= ~(1 << j);
-			flag_inainte = 0;
+			flag_directie = 0;
 			j--;
 			i = 0;
 		}
