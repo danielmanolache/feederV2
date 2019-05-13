@@ -755,7 +755,7 @@ int pid(float viteza_referinta){
 		}
 		
 // 				Wire.beginTransmission(10);
-// 				Wire.write(int(Viteza_masurata));
+// 				Wire.write(int(flag_trimiteI2C));
 // 				Wire.endTransmission();
 	}
 	return output;
