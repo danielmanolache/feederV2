@@ -68,7 +68,7 @@ uint16_t kk;
 
 //viteza masurata   - de mutat in functia inainte
 uint8_t ii[100];
-float ff[5];
+int16_t ff[3];
 
 
 uint32_t SLAVE_ADRESS=850;
@@ -392,7 +392,7 @@ void loop(){
 	press_both_buttons();
 	mot.braking();
 	reset_pid_variables();//resset error, integral and derivative to 0
-	trimiteI2C(1);
+	//trimiteI2C(1);
 	send_i2c_response();
 	delayMicroseconds(50);
 }
@@ -401,9 +401,15 @@ int trimiteI2C(int i){
 	if (flag_trimiteI2C == 1)
 	// 	dtostrf(encoderMotorPos, 3, 2, k);  //convers the float or integer to a string. (floatVar, minStringWidthIncDecimalPoint, numVarsAfterDecimal, empty array);
 	{
-		Wire.beginTransmission(10);
-		Wire.write(i);
-		Wire.endTransmission();
+		for(int j=0;j<kk;j++){
+			Wire.beginTransmission(10);
+			Wire.write(ii[j]);
+			Wire.endTransmission();
+			ii[i];
+			}
+		kk=0;
+	
+		flag_trimiteI2C=0;
 	}
 	return 0;
 }
@@ -482,18 +488,18 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
 
 void doEncoderMotor()
 {
-	if(flag_directie == 1) //incrementare
-	{
-		encoderMotorPos++;
-	}
-	else if (flag_directie == -1) //decrementare
-	{
-		encoderMotorPos--;
-	}
-	else
-	{
+// 	if(flag_directie == 1) //incrementare
+// 	{
+// 		encoderMotorPos++;
+// 	}
+// 	else if (flag_directie == -1) //decrementare
+// 	{
+// 		encoderMotorPos--;
+// 	}
+// 	else
+// 	{
 		encoderMotorPos=encoderMotorPos+encoder_motor.directie();
-	}
+/*	}*/
 
 	if (encoderMotorPos == pasul+1) // resetare encoder
 	{
@@ -525,14 +531,13 @@ void doEncoderMotor()
 }
 
 void  doEncoderRoata() {
-	ii[kk]=encoderMotorPos;
-	kk=kk+1;
-	flag_roata = 1;
-	if (kk==28)
+	if(encoder_motor.directie()==1)
 	{
-		kk=0;
+		ii[kk]=encoderMotorPos;
+		kk++;
+		flag_roata = 1;
+		flag_trimiteI2C=1;
 	}
-	flag_trimiteI2C=0;
 }
 
 int activare_motor(){ // forward
@@ -546,14 +551,6 @@ int activare_motor(){ // forward
 		{
 			flag_directie=0;
 			flag_power=0;
-		}
-		if (buton_red.status()== 1 && buton_black.status()==0 || buton_black.status()== 1 && buton_red.status()==0)
-		{
-			pas=28500*flag_directie;
-		}
-		else
-		{
-			pas=pasul*flag_directie;//))))))))))))))))))))))))  pas=pasul*flag_directie; encoderMotorPos = encoderMotorPos % pasul+32500;
 		}
 		led_red.on();
 		led_green.off();
@@ -635,6 +632,9 @@ int activare_motor(){ // forward
 		ff[0]=0;
 		ff[1]=0;
 		ff[2]=0;
+// 				Wire.beginTransmission(10);
+// 				Wire.write(encoderMotorPos);
+// 				Wire.endTransmission();
 	}
 	return 0;
 }
@@ -690,7 +690,7 @@ int pid(float viteza_referinta){
 		static const float Kp=70;
 		static const float Ki=10;
 		static const float Kd=40;
-		static float Viteza_masurata;
+		float Viteza_masurata;
 		static float error;
 		static float derivative;
 		cli();
@@ -711,25 +711,25 @@ int pid(float viteza_referinta){
 		//Viteza_masurata calculata in functie directia motorului	
 		if (_encoderMotorPos >=_encoderlast)
 		{
-			ff[2]=(_encoderMotorPos-_encoderlast)/dt;
+			ff[2]=(_encoderMotorPos-_encoderlast)*100/dt;
 			if (_encoderMotorPos-_encoderlast > pasul/2)
 			{
-				ff[2]=(_encoderlast+pasul-_encoderMotorPos)/dt;
+				ff[2]=(_encoderlast+pasul-_encoderMotorPos)*100/dt;
 			} 
 		} 
 		else
 		{
-			ff[2]=(_encoderlast-_encoderMotorPos)/dt;
+			ff[2]=(_encoderlast-_encoderMotorPos)*100/dt;
 			if (_encoderlast-_encoderMotorPos > pasul/2)
 			{
-				ff[2]=(_encoderMotorPos+pasul-_encoderlast)/dt;
+				ff[2]=(_encoderMotorPos+pasul-_encoderlast)*100/dt;
 			}
 		}
 		
 		Viteza_masurata=(ff[0]+ff[1]+ff[2])/3;//filtrare viteza masurata
-		error=viteza_referinta-Viteza_masurata;//setpoint - measured_value
+		error=viteza_referinta-Viteza_masurata/100;//setpoint - measured_value
 		integral = integral + error * dt;
-		derivative = ((ff[0]+ff[1]+ff[2])/3 - previous_error) / dt;
+		derivative = ((ff[0]+ff[1]+ff[2])/300 - previous_error) / dt;
 		output = Kp * error + Ki * integral + Kd * derivative;
 		previous_error = error;
 		//_______________
@@ -754,9 +754,9 @@ int pid(float viteza_referinta){
 			mot.reverse(output);
 		}
 		
-				Wire.beginTransmission(10);
-				Wire.write(pasi_parcursi());
-				Wire.endTransmission();
+// 				Wire.beginTransmission(10);
+// 				Wire.write(int(Viteza_masurata));
+// 				Wire.endTransmission();
 	}
 	return output;
 }
