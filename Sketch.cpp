@@ -1,5 +1,7 @@
 ﻿/*Begining of Auto generated code by Atmel studio */
 #include <Arduino.h>
+#include "Motor1.h"
+
 
 /*End of auto generated code by Atmel studio */
 
@@ -9,6 +11,15 @@
 #include <avr/interrupt.h>
 #include <math.h>
 #include <avr/sleep.h>
+//#include "myfunction.h" ++
+#include "include/comandaI2C.h"
+#include "include/SenzorCap1.h"
+#include "include/Button1.h"
+#include "include/Led1.h"
+#include "include/EncoderMotor1.h"
+#include "include/teste.h"
+
+//void myfunction();
 //Beginning of Auto generated function prototypes by Atmel Studio
 int trimiteI2C (int i);
 void doEncoderMotor();
@@ -23,7 +34,7 @@ void receiveEvent(int howMany);
 int send_i2c_response();
 int comands_handling();
 void reset_pid_variables();
-int seleep_enable();// going to sleep is voltage BOD detection
+int sleep_enablef();// going to sleep is voltage BOD detection
 uint8_t citire_secventa_butoane(uint8_t a);
 
 //End of Auto generated function prototypes by Atmel Studio
@@ -31,7 +42,6 @@ uint8_t citire_secventa_butoane(uint8_t a);
 //output pins
 #define m_forward 9
 #define m_reverse 10
-
 #define semnal_38k 1
 //#define alimentare_circuit PORTE3
 
@@ -51,7 +61,7 @@ float integral;
 //output varibales
 volatile bool flag_trimiteI2C = 0;
 volatile uint8_t portDhistory = 0xFF;
-volatile uint16_t encoderMotorPos;//))))))))))))))) 
+volatile uint16_t encoderMotorPos;//)))))))))))))))
 volatile int8_t flag_directie;
 int8_t flag_low_voltage;
 bool flag_roata;
@@ -59,234 +69,39 @@ byte pwm_motor;
 unsigned long lastMilli;
 uint16_t pasul;
 volatile bool flag_power;
-
 uint8_t lungime_pas_mm;
 const float acceleratia=0.016;
-int pas=125;
+uint8_t cod_butoane; //mod setare de la butoane
 unsigned int t;
 uint16_t kk;
-
-//viteza masurata   - de mutat in functia inainte
 uint8_t ii[100];
-int16_t ff[3];
+uint8_t ff[3];
+volatile uint8_t pulse_duration;
 
-
-uint32_t SLAVE_ADRESS=850;
+uint32_t SLAVE_ADRESS=10;
 uint8_t adress_b1, adress_b2, adress_b3; // slave address b1 - most signficant byte, b2 - last significant byte
 uint8_t flag_acknoledge_i2c = 0;
 unsigned char command_recived_i2c[] = {0, 0, 0, 0};
-
-uint8_t cod_butoane; //mod setare de la butoane
-
-
-
-//class Button--------------------------------------------------------------
-class Button
-{
-	public:
-	Button(byte pin);
-	void begin();
-	bool status();
-	private:
-	byte _pin;
-	bool _status;
-};
-
-Button::Button(byte pin)
-{
-	_pin=pin;//here we store the pin number in private variable _pin
-}
-
-void Button::begin() //this initializes the pin
-{
-	DDRD &=~(1 << _pin); //pinMode(_pin, INPUT);
 	
-}
-
-bool Button::status() //this returns the current status
-{
-	
-	if (PIND & (1 << _pin))
-	{return 0;}
-	else
-	{return 1;}
-	//return _status
-}
-
-class Led
-{
-	public:
-	Led(byte pin);
-	void begin();
-	void on();
-	void off();
-	bool status();
-	private:
-	byte _pin;
-	bool _status;
-
-};
-
-Led::Led(byte pin)
-{
-	_pin=pin;//here we store the pin number in private variable _pin
-}
-void Led::begin() //this initializes the pin (PORTD)
-{
-	DDRD |=(1 << _pin); //pin as output   pinMode(_pin, OUTPUT);
-}
-
-void Led::on() //this turns the led on
-{
-	PORTD &=~(1 << _pin); //pin low is on      digitalWrite(_pin, LOW);
-	//_status=1; //set the status property
-}
-
-void Led::off() //this turns the led off
-{
-	PORTD |= (1 << _pin);//pin high is off    digitalWrite(_pin, HIGH);
-	//_status=0; //set the status property
-}
-
-bool Led::status() //this returns the current status
-{
-	if (PIND & (1 << _pin))
-	{return 0;} //led off for pin on
-	else
-	{return 1;} //led on for pin off
-	//return _status;
-}
 
 
-//clasa motor------------------------------------
-class Motor
-{
-	public:
-	Motor(byte pin1, byte pin2);
-	void begin();
-	void forward(byte speed1);
-	void reverse(byte speed2);
-	void braking();
-	private:
-	byte _pin1;
-	byte _pin2;
-	byte _speed1;
-	byte _speed2;
-};
-
-Motor::Motor(byte pin1, byte pin2)
-{
-	_pin1=pin1;//here we store the pin number in private variable _pin
-	_pin2=pin2;
-}
-
-void Motor::begin() //this initializes the pin
-{
-	DDRB |=(1 << _pin1) | (1 << _pin2); //pin as output   pinMode(_pin, OUTPUT); sau definit si in limbaj arduino
-}
-
-void Motor::forward(byte speed1) //this returns the current status
-{
-	_speed1=255-speed1;
-	analogWrite(m_forward, 255);
-	analogWrite(m_reverse, _speed1);
-}
-
-void Motor::reverse(byte speed2) //this returns the current status
-{
-	_speed2=255-speed2;
-	analogWrite(m_forward, _speed2);
-	analogWrite(m_reverse, 255);
-}
-
-void Motor::braking() //this returns the current status
-{
-	analogWrite(m_forward, 255);
-	analogWrite(m_reverse, 255);
-	delay(100);
-}
-//class SenzorCap--------------------------------------------------------------
-class SenzorCap
-{
-	public:
-	SenzorCap(byte pin);
-	void begin();
-	bool status();
-	private:
-	byte _pin;
-	bool _status;
-};
-
-SenzorCap::SenzorCap(byte pin)
-{
-	_pin=pin;//here we store the pin number in private variable _pin
-}
-
-void SenzorCap::begin() //this initializes the pin
-{
-	DDRB &=~(1 << _pin); //pinMode(_pin, INPUT);
-}
-
-bool SenzorCap::status() //this returns the current status
-{
-	if (PINB & (1 << _pin))
-	{return 1;}
-	else
-	{return 0;}
-	//return _status
-}
-
-//sfarsit class SenzorCap--------------------------------------------------------------
-
-
-//class MotorClass--------------------------------------------------------------
-class EcoderMotor
-{
-	public:
-	EcoderMotor(byte pin);
-	void begin();
-	int directie();
-	private:
-	byte _pin;
-	bool _status;
-};
-
-EcoderMotor::EcoderMotor(byte pin)
-{
-	_pin=pin;//here we store the pin number in private variable _pin
-}
-
-void EcoderMotor::begin() //this initializes the pin
-{
-	DDRC &=~(1 << _pin); //pinMode(_pin, INPUT);
-}
-
-int EcoderMotor::directie() //this returns the current status
-{
-	if (PINC & (1 << _pin))
-	{return 1;}
-	else
-	{return -1;}
-}
-
-//sfarsit class MotorClass--------------------------------------------------------------
+//creare obiecte----------------------------------
 
 //instantiere outputs
-Led led_red(PORTD4);
-Led led_green(PORTD5);
-Motor mot(PORTB1, PORTB2);
+Led1 led_red(PORTD4);
+Led1 led_green(PORTD5);
+Motor1 mot(PORTB1, PORTB2);
 
 //instantiere inputs
-Button buton_red(PORTD6);
-Button buton_black(PORTD7);
-SenzorCap senzor_cap(PORTB0);
-EcoderMotor encoder_motor(PORTC3);
+Button1 buton_red(PORTD6);
+Button1 buton_black(PORTD7);
+SenzorCap1 senzor_cap(PORTB0);
+EncoderMotor1 encoder_motor(PORTC3);
 
-//end class--------------------------------------------------------------
 
 void setup(){
 	//setare timere-------------------------------------------------------
-	TCCR1B = TCCR1B & B11111000 | B00000001;    //schimbare frecventa PWM - B00000001-31 kHz ; B00000010-3.9 kHz (setare prescaler)
+	TCCR1B = TCCR1B & B11111000 | B00000001;    //schimbare frecventa PWM comanda motor - B00000001-31 kHz ; B00000010-3.9 kHz (setare prescaler)
 	
 	//setare frecventa 38 kHz la Timer 4
 	TCCR4A = _BV (COM4A0); // CTC, toggle OC4A on Compare Match
@@ -296,21 +111,20 @@ void setup(){
 	//setare timere-------------------------------------------------------
 
 	//output pins
-	//creare obiecte----------------------------------
+	//instantiere obiecte----------------------------------
 	led_red.begin();
 	led_green.begin();
 	buton_black.begin();
 	buton_red.begin();
 	mot.begin();
-	//end creare obiecte------------------------------------
 	
 	
-	// 	adress_b1 = 0b01111000 | SLAVE_ADRESS >> 16; //most signficant byte
-	// 	adress_b2 = SLAVE_ADRESS >> 8; //most signficant byte
-	// 	adress_b3 = SLAVE_ADRESS;
-	// 	EEPROM.write(100, adress_b1);
-	// 	EEPROM.write(101, adress_b2);
-	// 	EEPROM.write(102, adress_b3	);
+// 	adress_b1 = 0b01111000 | SLAVE_ADRESS >> 16; //most signficant byte
+// 	adress_b2 = SLAVE_ADRESS >> 8; //most signficant byte
+// 	adress_b3 = SLAVE_ADRESS;
+// 	EEPROM.write(100, adress_b1);
+// 	EEPROM.write(101, adress_b2);
+// 	EEPROM.write(102, adress_b3	);
 	adress_b1 = EEPROM.read(100);
 	adress_b2 = EEPROM.read(101);
 	adress_b3 = EEPROM.read(102);
@@ -319,26 +133,31 @@ void setup(){
 	SLAVE_ADRESS = adress_b1 << 16 | adress_b2 <<8 | adress_b3;// adresa I2C
 	encoderMotorPos = (EEPROM.read(1) + (EEPROM.read(0) << 8)) % pasul;
 
-	
-	//OUTPUT PINS
+	//output pins
 
 	DDRE = 0b00001111;
 	PORTE = 0b00000111; // activare npn PE3 LOW
+	
+	// output unused pins - PULLUP
+	// 	DDRC |= (1<<DDRC0) | (1<<DDRC1); //	0b00000011;
+	// 	PORTC |= (1<<PORTC0) | (1<<PORTC1);
+	// 	DDRB |= (1<<DDRB3) | (1<<DDRB4) | (1<<DDRB5);
+	// 	PORTB |= (1<<PORTB3) | (1<<PORTB4) | (1<<PORTB5);
 
 	pinMode(semnal_38k, OUTPUT);
 	Wire.begin(adress_b1);
 	Wire.onReceive(receiveEvent);
 	//input pins
-	pinMode(senzor2_cap, INPUT);
+	pinMode(senzor2_cap, INPUT_PULLUP);
 	pinMode(senzor_roata, INPUT);
 	pinMode(directie_motor_pin, INPUT);
 	pinMode(senzor_motor, INPUT);
 	pinMode(brown_out, INPUT_PULLUP);
+	DDRC &=~(1 << DDRC1); //pinMode(_pin, INPUT);
 	attachInterrupt(digitalPinToInterrupt(senzor_motor), doEncoderMotor, FALLING);
 	attachInterrupt(digitalPinToInterrupt(senzor_roata), doEncoderRoata, FALLING);
 	//digitalWrite(alimentare_circuit, HIGH);
 
-	
 	//portD=================================================== intreruperi buton_red si Buton _black
 	DDRD &= ~((1 << DDD6) | (1 << DDD7)); // Clear the PC2 pin
 	// PD (PCINT23 pin)is now inputs
@@ -369,6 +188,16 @@ void setup(){
 
 	led_green.on();
 	led_red.on();
+	//timer2
+	////////////////////////////
+	//PRR0 |=(1 << PRTIM2);
+	TCCR2B |= (1 << CS02) | (1 << CS01) | (1 << CS00); //set prescaler to 1024
+	TCCR2B &= ~(1 << WGM22); //NORMAL MODE OPERATION
+	TCCR2A &= ~(1 << WGM20) & ~(1 << WGM21); //NORMAL MODE OPERATION
+	TIMSK2 |= (1 << TOIE2); //enable T2 OVF interrupt
+
+	//////////////////////
+	//ceva comment pentru git
 	delay(1000);
 	led_red.off();
 	//in caz ca a aparut o intrerupere intrerupt lumina la pornire atunci se
@@ -383,17 +212,25 @@ void setup(){
 	{
 		led_red.on();
 	}
+	Wire.beginTransmission(10);
+	Wire.write("start");
+	Wire.endTransmission();
 }
 
 
 void loop(){
-	seleep_enable();
+	TIMSK2 |= (1 << TOIE2); //enable T2 OVF interrupt
 	activare_motor();   //motor forward
 	press_both_buttons();
-	mot.braking();
+	TIMSK2 &= ~(1 << TOIE2); //disable TOVF interrupt
 	reset_pid_variables();//resset error, integral and derivative to 0
-	//trimiteI2C(1);
+	
 	send_i2c_response();
+	sleep_enablef();
+	//teste begin--------------------------------
+	trimiteI2C(1);
+	//flag_directie = teste();
+	//teste end--------------------------------
 	delayMicroseconds(50);
 }
 
@@ -405,10 +242,8 @@ int trimiteI2C(int i){
 			Wire.beginTransmission(10);
 			Wire.write(ii[j]);
 			Wire.endTransmission();
-			ii[i];
-			}
+		}
 		kk=0;
-	
 		flag_trimiteI2C=0;
 	}
 	return 0;
@@ -449,6 +284,7 @@ ISR (PCINT1_vect) //intreruperi brown_out
 		mot.braking();
 		EEPROM.write(1, (encoderMotorPos % pasul));//SCRIE IN MEMORIE
 		EEPROM.write(0, ((encoderMotorPos % pasul)>>8));//SCRIE IN MEMORIE
+		flag_directie=0;
 	}
 }
 
@@ -488,18 +324,22 @@ ISR (PCINT2_vect) //intreruperi buton_red si buton _black
 
 void doEncoderMotor()
 {
-// 	if(flag_directie == 1) //incrementare
-// 	{
-// 		encoderMotorPos++;
-// 	}
-// 	else if (flag_directie == -1) //decrementare
-// 	{
-// 		encoderMotorPos--;
-// 	}
-// 	else
-// 	{
+	ff[0]=ff[1];
+	ff[1]=ff[2];
+	ff[2]=TCNT2;
+	TCNT2 = 0;
+	if(flag_directie == 1) //incrementare
+	{
+		encoderMotorPos++;
+	}
+	else if (flag_directie == -1) //decrementare
+	{
+		encoderMotorPos--;
+	}
+	else
+	{
 		encoderMotorPos=encoderMotorPos+encoder_motor.directie();
-/*	}*/
+	}
 
 	if (encoderMotorPos == pasul+1) // resetare encoder
 	{
@@ -521,23 +361,25 @@ void doEncoderMotor()
 		led_red.off();
 		led_green.on();
 		
-	}	
+	}
 
 	if (encoderMotorPos == 0) // resetare encoder
 	{
 		encoderMotorPos=pasul;
-	}	
+	}
 
 }
 
 void  doEncoderRoata() {
 	if(encoder_motor.directie()==1)
 	{
-		ii[kk]=encoderMotorPos;
-		kk++;
-		flag_roata = 1;
-		flag_trimiteI2C=1;
+				ii[kk]=encoderMotorPos;
+				kk++;
+				if(kk==99){kk=0;}
+		 		flag_roata = 1;
+ 				flag_trimiteI2C=1;
 	}
+	//comandai2c(10, int(encoderMotorPos));//begin transmission, send (adress, int), end transmission
 }
 
 int activare_motor(){ // forward
@@ -565,7 +407,7 @@ int activare_motor(){ // forward
 		sei();
 		float a = acceleratia; //acceleratia
 		int timp_acceleratie;
-		if (pas >125)
+		if (pasul >125)
 		{
 			timp_acceleratie = 145;
 		}
@@ -582,7 +424,7 @@ int activare_motor(){ // forward
 		float d; //distanta
 
 		//secventa 1 accelerare
-		while(t < timp_acceleratie)   //timp_acceleratie
+		while((t < timp_acceleratie) && (flag_low_voltage ==0) )   //timp_acceleratie
 		{
 			v=a*t;
 			pid(v);// calculare pid si comanda motor
@@ -597,44 +439,44 @@ int activare_motor(){ // forward
 		v=a*timp_acceleratie;
 		d=((a*timp_acceleratie)/2)*timp_acceleratie;
 		pozitie_deceleratie = 50;
-		while((pasi_ramasi() >= pozitie_deceleratie) || (flag_power == 1)) // >=pozitie_deceleratie
+		while(((pasi_ramasi() >= pozitie_deceleratie) || (flag_power == 1)) && (flag_low_voltage == 0) ) // >=pozitie_deceleratie
 		{
 			pid(v);
 		}
 		//secventa 2 end constant speed
-		//----------------
+		//secventa 3 deccelerare
 		cli();
 		lastMilli=millis();
 		t = millis()-lastMilli;
 		sei();
-				while(pasi_ramasi() >= 5){//
+		while(pasi_ramasi() >= 5){//
 			v=sqrt((pasi_ramasi()-3)*2*acceleratia);//viteza de referinta se calculeaza in funcie de distanta ramasa v(d)
-			if (v < 0.15)
+			if (v < 0.1)
 			{
-				v=0.15;
+				v=0.1;
 			}
 			pid(v);//pwm_motor=pid(v3);
 		}
 		//secventa 3 end - deccelerare
 
-		v=0.15;
+		v=0.1;
 
 		//secventa 4 - viteza constanta la oprire
-		while(flag_directie |= 0)
+
+		do
 		{
 			pid(v); //viteza-referinta v4 = 0.1
-		}
+		} while ((flag_directie |= 0) && (flag_low_voltage == 0));
 		//secventa 4 end viteza constanta la oprire
-		
 		flag_trimiteI2C=1;
 		previous_error=0;//eroarea cumulata de la pid se reseteaza
 		integral=0;//eroarea cumulata de la pid se reseteaza
 		ff[0]=0;
 		ff[1]=0;
 		ff[2]=0;
-// 				Wire.beginTransmission(10);
-// 				Wire.write(encoderMotorPos);
-// 				Wire.endTransmission();
+// 		 				Wire.beginTransmission(10);
+// 						Wire.write(encoderMotorPos);
+// 		 				Wire.endTransmission();
 	}
 	return 0;
 }
@@ -647,7 +489,7 @@ uint16_t pasi_ramasi(){
 		p=(pasul-encoderMotorPos)*flag_directie;
 		sei();
 		return p;
-	} 
+	}
 	else
 	{
 		cli();
@@ -665,7 +507,7 @@ uint16_t pasi_parcursi(){
 		p=encoderMotorPos;
 		sei();
 		return p;
-	} 
+	}
 	else
 	{
 		cli();
@@ -687,49 +529,22 @@ int pid(float viteza_referinta){
 	
 	if (z > dt)//daca au trecut .... milisec atunci se masoara
 	{
-		static const float Kp=70;
-		static const float Ki=10;
-		static const float Kd=40;
+		static const uint8_t Kp=70;
+		static const uint8_t Ki=10;
+		static const uint8_t Kd=40;
 		float Viteza_masurata;
 		static float error;
 		static float derivative;
-		cli();
-		int16_t _encoderMotorPos=encoderMotorPos;
-		sei();
-		int16_t _encoderlast=encoderlast;
-		encoderlast=_encoderMotorPos;
 
 		
 		cli();
 		lastMilli2 = millis();
 		sei();
 		
-		//filtrare viteza masurata
-		ff[0]=ff[1];
-		ff[1]=ff[2];
-
-		//Viteza_masurata calculata in functie directia motorului	
-		if (_encoderMotorPos >=_encoderlast)
-		{
-			ff[2]=(_encoderMotorPos-_encoderlast)*100/dt;
-			if (_encoderMotorPos-_encoderlast > pasul/2)
-			{
-				ff[2]=(_encoderlast+pasul-_encoderMotorPos)*100/dt;
-			} 
-		} 
-		else
-		{
-			ff[2]=(_encoderlast-_encoderMotorPos)*100/dt;
-			if (_encoderlast-_encoderMotorPos > pasul/2)
-			{
-				ff[2]=(_encoderMotorPos+pasul-_encoderlast)*100/dt;
-			}
-		}
-		
-		Viteza_masurata=(ff[0]+ff[1]+ff[2])/3;//filtrare viteza masurata
+		Viteza_masurata=2158/ff[2];//filtrare viteza masurata
 		error=viteza_referinta-Viteza_masurata/100;//setpoint - measured_value
 		integral = integral + error * dt;
-		derivative = ((ff[0]+ff[1]+ff[2])/300 - previous_error) / dt;
+		derivative = (64.7/(ff[0]+ff[1]+ff[2]) - previous_error) / dt;
 		output = Kp * error + Ki * integral + Kd * derivative;
 		previous_error = error;
 		//_______________
@@ -754,9 +569,8 @@ int pid(float viteza_referinta){
 			mot.reverse(output);
 		}
 		
-// 				Wire.beginTransmission(10);
-// 				Wire.write(int(flag_trimiteI2C));
-// 				Wire.endTransmission();
+
+//comandai2c(10, int(encoder_motor.directie()));//begin transmission, send (adress, int), end transmission
 	}
 	return output;
 }
@@ -807,12 +621,13 @@ void press_both_buttons(){//verificare daca se intra in mod de reglare pozitie
 						pid(0.1);
 					}
 					mot.braking();
+					encoderMotorPos=1;
 					led_red.off();
-					//delay(25);
+					delay(100);
 				}
 				if (buton_black.status() == 1) {
 					cli();
-					encoderMotorPos=32500;
+					encoderMotorPos=1;
 					sei();
 					led_green.on();
 					delay(500);
@@ -920,6 +735,9 @@ int comands_handling() {
 		mot.braking();
 		led_red.off();
 		delay(25);
+		cli();
+		encoderMotorPos=1;
+		sei();
 		flag_acknoledge_i2c = 1;
 		break;
 		
@@ -947,7 +765,7 @@ int comands_handling() {
 	return 0;
 }
 
-int seleep_enable(){// going to sleep is voltage BOD detection
+int sleep_enablef(){// going to sleep is voltage BOD detection
 	cli();
 	if ((flag_low_voltage == 1) || !(PINC & (1 << PINC2)) )//  verificare pin de brownout tensiune
 	{
@@ -1008,3 +826,10 @@ uint8_t citire_secventa_butoane(uint8_t a) {
 	}
 	return a;
 }
+ 
+ 
+ ///Timer2 overflow interrupt
+ ISR (TIMER2_OVF_vect){
+ 	TCNT2 = 205; //set timer new=205 C8
+	ff[2] = 255;
+ }
